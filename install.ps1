@@ -92,27 +92,27 @@ function Setup-PowerShellProfile {
         New-Item -ItemType File -Path $profilePath -Force | Out-Null
     }
     
-    $profileContent = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    $profileContent = @()
     
-    if (-not $profileContent) {
-        $profileContent = ""
+    if (Test-Path $profilePath) {
+        $profileContent = @(Get-Content $profilePath -ErrorAction SilentlyContinue | Where-Object { $_ })
     }
     
-    # Add PATH setup if not already present
-    if ($profileContent -notmatch "\.local\\bin") {
-        $profileContent += "`n`n# nlsh - PATH`n"
-        $profileContent += "`$env:PATH = `"$LOCAL_BIN;`$env:PATH`"`n"
-    }
+    # Check if nlsh config already exists
+    $hasNlshConfig = $profileContent -match "nlsh"
     
-    # Add nlsh auto-start if not already present
-    if ($profileContent -notmatch "nlsh.*auto-start") {
-        $profileContent += "`n# nlsh - auto-start (remove these lines to disable)`n"
-        $profileContent += "# Uncomment below to auto-launch nlsh on PowerShell startup`n"
-        $profileContent += "# nlsh`n"
-        Write-Host "Added nlsh configuration to PowerShell profile"
-    }
+    if (-not $hasNlshConfig) {
+    $profileContent += "`n"
+    $profileContent += "# nlsh - PATH`n"
+    $profileContent += "`$env:PATH = `"$LOCAL_BIN;`$env:PATH`"`n"
+    $profileContent += "`n"
+    $profileContent += "# nlsh - auto-start (remove this section to disable)`n"
+    $profileContent += "# Uncomment below to auto-launch nlsh on PowerShell startup`n"
+    $profileContent += "# nlsh`n"
+    Write-Host "Added nlsh configuration to PowerShell profile"
+}
     
-    $profileContent | Set-Content $profilePath -Encoding UTF8
+    $profileContent -join "`n" | Set-Content $profilePath -Encoding UTF8 -NoNewline
 }
 
 Setup-PowerShellProfile
