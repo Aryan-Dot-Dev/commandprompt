@@ -217,13 +217,27 @@ def call_llm(prompt: str) -> str:
         if provider == "gemini":
             try:
                 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-                response = client.models.generate_content(
-                    model="gemini-3-flash-preview",
-                    contents=prompt
-                )
-                if not response or not response.text:
-                    raise Exception("Gemini returned empty response")
-                return response.text.strip()
+                # Try primary model first
+                try:
+                    response = client.models.generate_content(
+                        model="gemini-3-flash-preview",
+                        contents=prompt
+                    )
+                    if not response or not response.text:
+                        raise Exception("Empty response")
+                    return response.text.strip()
+                except Exception as primary_error:
+                    # Fallback to gemini-2.5-flash
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=prompt
+                        )
+                        if not response or not response.text:
+                            raise Exception("Empty response")
+                        return response.text.strip()
+                    except Exception as fallback_error:
+                        raise Exception(f"Primary: {str(primary_error)}, Fallback: {str(fallback_error)}")
             except Exception as e:
                 raise Exception(f"Gemini error: {str(e)}")
     
@@ -232,34 +246,37 @@ def call_llm(prompt: str) -> str:
         "Authorization": f"Bearer {os.getenv('NVIDIA_NIM_API_KEY')}",
         "Content-Type": "application/json"
     }
-    data = {
-        "model": "meta/llama-3.1-70b-instruct",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "top_p": 0.5,
-        "max_tokens": 50
-    }
-    try:
-        response = requests.post(
-            "https://integrate.api.nvidia.com/v1/chat/completions",
-            json=data,
-            headers=headers,
-            timeout=30
-        )
-        if response.status_code != 200:
-            raise Exception(f"API error: {response.status_code} - {response.text}")
-        
-        result = response.json()
-        if not result or 'choices' not in result or not result['choices']:
-            raise Exception(f"Invalid response format: {result}")
-        
-        content = result['choices'][0].get('message', {}).get('content')
-        if not content:
-            raise Exception(f"No content in response: {result}")
-        
-        return content.strip()
-    except Exception as e:
-        raise Exception(f"Nvidia NIM error: {str(e)}")
+    
+    # Try primary model first
+    primary_model = "nvidia/nemotron-3-super-120b-a12b"
+    fallback_model = "moonshotai/kimi-k2.5"
+    
+    for model in [primary_model, fallback_model]:
+        data = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "top_p": 0.5,
+            "max_tokens": 50
+        }
+        try:
+            response = requests.post(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                json=data,
+                headers=headers,
+                timeout=30
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result and 'choices' in result and result['choices']:
+                    content = result['choices'][0].get('message', {}).get('content')
+                    if content:
+                        return content.strip()
+        except:
+            pass
+    
+    # If both failed, raise error with details
+    raise Exception(f"Nvidia NIM error: Both {primary_model} and {fallback_model} failed")
 
 def get_command(user_input: str, cwd: str, shell_type: str, history_context: str) -> str:
     if shell_type == "cmd":
