@@ -23,8 +23,15 @@ def load_env():
                     os.environ[key] = value
 
 def save_api_key(provider: str, api_key: str):
-    with open(env_path, "r") as f:
-        lines = f.readlines() if os.path.exists(env_path) else []
+    # Ensure directory exists
+    env_dir = os.path.dirname(env_path)
+    if env_dir and not os.path.exists(env_dir):
+        os.makedirs(env_dir, exist_ok=True)
+    
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+            lines = f.readlines()
     
     env_dict = {}
     for line in lines:

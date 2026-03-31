@@ -43,6 +43,15 @@ Deactivate
 Write-Host "Creating nlsh command..."
 $null = New-Item -ItemType Directory -Path $LOCAL_BIN -Force
 
+# Create empty .env file for configuration
+$env_file = Join-Path $INSTALL_DIR ".env"
+if (-not (Test-Path $env_file)) {
+    @"
+# nlsh environment configuration
+# Add your API keys here
+"@ | Set-Content $env_file -Encoding UTF8
+}
+
 # Create Windows batch wrapper
 $nlsh_bat_content = @"
 @echo off
