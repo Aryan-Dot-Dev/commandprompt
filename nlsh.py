@@ -279,8 +279,16 @@ def call_llm(prompt: str) -> str:
                 raise Exception(f"Gemini error: {str(e)}")
     
     # Nvidia (default or fallback)
+    api_key = os.getenv('NVIDIA_NIM_API_KEY')
+    
+    if not api_key:
+        logger.error("NVIDIA_NIM_API_KEY not found in environment")
+        raise Exception("NVIDIA_NIM_API_KEY not configured. Please run '!api' to set it up.")
+    
+    logger.info(f"API Key loaded: {api_key[:10]}...{api_key[-5:]}")
+    
     headers = {
-        "Authorization": f"Bearer {os.getenv('NVIDIA_NIM_API_KEY')}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
@@ -296,17 +304,17 @@ def call_llm(prompt: str) -> str:
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
                 "top_p": 0.5,
-                "max_tokens": 50,
-                "chat_template_kwargs": {
-                    "enable_thinking": True
-                }
+                "max_tokens": 50
             }
+            logger.debug(f"Request headers: {headers}")
+            logger.debug(f"Request data: {data}")
             response = requests.post(
                 "https://integrate.api.nvidia.com/v1/chat/completions",
                 json=data,
                 headers=headers,
                 timeout=120
             )
+            logger.info(f"Response status: {response.status_code}")
             if response.status_code == 200:
                 result = response.json()
                 if result and 'choices' in result and result['choices']:
