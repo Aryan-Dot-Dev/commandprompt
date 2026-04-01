@@ -3,6 +3,25 @@ import signal
 import os
 import sys
 import subprocess
+import logging
+from datetime import datetime
+
+# Setup logging
+script_dir = os.path.dirname(os.path.abspath(__file__))
+log_dir = os.path.join(script_dir, "logs")
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir, exist_ok=True)
+
+log_file = os.path.join(log_dir, f"nlsh_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def exit_handler(sig, frame):
     print()
@@ -15,12 +34,16 @@ env_path = os.path.join(script_dir, ".env")
 
 def load_env():
     if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    os.environ[key] = value
+        try:
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = line.split("=", 1)
+                        os.environ[key] = value
+            logger.info(f"Environment loaded from {env_path}")
+        except Exception as e:
+            logger.error(f"Failed to load environment from {env_path}: {str(e)}")
 
 def save_api_key(provider: str, api_key: str):
     # Ensure directory exists
@@ -59,6 +82,7 @@ def setup_api_key():
     try:
         import questionary
     except ImportError:
+        logger.info("Installing questionary package")
         subprocess.run([sys.executable, "-m", "pip", "install", "questionary", "-q"], check=False)
         import questionary
     
@@ -69,6 +93,7 @@ def setup_api_key():
     ).ask()
     
     if not provider or provider == "exit":
+        logger.info("LLM provider setup skipped")
         print("Skipped LLM provider setup. Using default (nvidia).\n")
         if not os.getenv("NVIDIA_NIM_API_KEY") and not os.getenv("GEMINI_API_KEY"):
             os.environ["LLM_PROVIDER"] = "nvidia"
@@ -91,12 +116,14 @@ def setup_api_key():
     api_key = questionary.text(f"Enter {prompt_text}:").ask()
     
     if not api_key:
+        logger.warning("No API key provided by user")
         print("No input provided.")
         return
     
     save_api_key(provider, api_key)
     os.environ["LLM_PROVIDER"] = provider
     os.environ[provider.upper() + "_API_KEY"] = api_key
+    logger.info(f"API provider configured: {provider}")
     print(f"✓ {provider} configured!\n")
 
 def show_help():
@@ -201,16 +228,19 @@ def get_shell_type() -> str:
 def call_llm(prompt: str) -> str:
     """Call the configured LLM provider."""
     provider = os.getenv("LLM_PROVIDER", "nvidia").lower()
+    logger.info(f"Calling LLM with provider: {provider}")
     
     if provider == "gemini":
         try:
             from google import genai
         except ImportError:
+            logger.info("Installing google-generativeai package")
             print("\n\033[33mInstalling google-generativeai...\033[0m")
             subprocess.run([sys.executable, "-m", "pip", "install", "google-genai", "-q"], check=False)
             try:
                 from google import genai
             except ImportError:
+                logger.error("Failed to install google-generativeai, falling back to Nvidia NIM")
                 print("\033[31mFailed to install google-generativeai. Falling back to Nvidia NIM.\033[0m")
                 provider = "nvidia"
         
@@ -219,26 +249,33 @@ def call_llm(prompt: str) -> str:
                 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
                 # Try primary model first
                 try:
+                    logger.info("Trying Gemini primary model: gemini-3-flash-preview")
                     response = client.models.generate_content(
                         model="gemini-3-flash-preview",
                         contents=prompt
                     )
                     if not response or not response.text:
                         raise Exception("Empty response")
+                    logger.info("Gemini primary model succeeded")
                     return response.text.strip()
                 except Exception as primary_error:
+                    logger.warning(f"Gemini primary model failed: {str(primary_error)}")
                     # Fallback to gemini-2.5-flash
                     try:
+                        logger.info("Trying Gemini fallback model: gemini-2.5-flash")
                         response = client.models.generate_content(
                             model="gemini-2.5-flash",
                             contents=prompt
                         )
                         if not response or not response.text:
                             raise Exception("Empty response")
+                        logger.info("Gemini fallback model succeeded")
                         return response.text.strip()
                     except Exception as fallback_error:
+                        logger.error(f"Both Gemini models failed - Primary: {str(primary_error)}, Fallback: {str(fallback_error)}")
                         raise Exception(f"Primary: {str(primary_error)}, Fallback: {str(fallback_error)}")
             except Exception as e:
+                logger.error(f"Gemini error: {str(e)}")
                 raise Exception(f"Gemini error: {str(e)}")
     
     # Nvidia (default or fallback)
@@ -252,17 +289,18 @@ def call_llm(prompt: str) -> str:
     fallback_model = "moonshotai/kimi-k2.5"
     
     for model in [primary_model, fallback_model]:
-        data = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "top_p": 0.5,
-            "max_tokens": 50,
-            "chat_template_kwargs": {
-                "enable_thinking": True
-            }
-        }
         try:
+            logger.info(f"Trying Nvidia model: {model}")
+            data = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "top_p": 0.5,
+                "max_tokens": 50,
+                "chat_template_kwargs": {
+                    "enable_thinking": True
+                }
+            }
             response = requests.post(
                 "https://integrate.api.nvidia.com/v1/chat/completions",
                 json=data,
@@ -274,12 +312,17 @@ def call_llm(prompt: str) -> str:
                 if result and 'choices' in result and result['choices']:
                     content = result['choices'][0].get('message', {}).get('content')
                     if content:
+                        logger.info(f"Nvidia model succeeded: {model}")
                         return content.strip()
-        except:
-            pass
+            else:
+                logger.warning(f"Nvidia model {model} returned status {response.status_code}: {response.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Nvidia model {model} failed: {str(e)}")
     
     # If both failed, raise error with details
-    raise Exception(f"Nvidia NIM error: Both {primary_model} and {fallback_model} failed")
+    error_msg = f"Nvidia NIM error: Both {primary_model} and {fallback_model} failed"
+    logger.error(error_msg)
+    raise Exception(error_msg)
 
 def get_command(user_input: str, cwd: str, shell_type: str, history_context: str) -> str:
     if shell_type == "cmd":
@@ -351,19 +394,30 @@ RESPOND WITH ONLY THE COMMAND:"""
 
 def run_command(command: str, shell_type: str) -> tuple:
     """Run command with the appropriate shell."""
-    if sys.platform == "win32" and shell_type == "powershell":
-        # Run PowerShell commands explicitly with powershell.exe
-        result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", command],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-    else:
-        # Use default shell (CMD on Windows, sh on Unix)
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
-    
-    return result.stdout, result.stderr
+    logger.info(f"Running command with {shell_type}: {command[:100]}")
+    try:
+        if sys.platform == "win32" and shell_type == "powershell":
+            # Run PowerShell commands explicitly with powershell.exe
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+        else:
+            # Use default shell (CMD on Windows, sh on Unix)
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            logger.warning(f"Command returned non-zero exit code {result.returncode}: {command[:100]}")
+        
+        return result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        logger.error(f"Command timed out: {command[:100]}")
+        return "", "Command timed out"
+    except Exception as e:
+        logger.error(f"Command execution error: {command[:100]}, Error: {str(e)}")
+        raise
 
 def is_natural_language(text: str) -> bool:
     if text.startswith("!"):
@@ -395,6 +449,7 @@ def main():
                 try:
                     os.chdir(path)
                 except Exception as e:
+                    logger.error(f"cd command failed for path '{path}': {str(e)}")
                     print(f"cd: {e}")
                 continue
             elif user_input == "cd":
@@ -439,11 +494,16 @@ def main():
             
             if not is_natural_language(user_input):
                 shell_type = get_shell_type()
-                stdout, stderr = run_command(user_input, shell_type)
-                print(stdout, end="")
-                if stderr:
-                    print(stderr, end="")
-                add_to_history(user_input, stdout + stderr)
+                try:
+                    stdout, stderr = run_command(user_input, shell_type)
+                    print(stdout, end="")
+                    if stderr:
+                        print(stderr, end="")
+                        logger.warning(f"Command execution stderr: {stderr[:200]}")
+                    add_to_history(user_input, stdout + stderr)
+                except Exception as e:
+                    logger.error(f"Command execution failed: {user_input[:100]}, Error: {str(e)}")
+                    print(f"\033[31merror: {str(e)[:100]}\033[0m")
                 continue
                         
             shell_type = get_shell_type()
@@ -470,10 +530,19 @@ def main():
             continue
         except Exception as e:
             err = str(e)
+            logger.error(f"Unexpected error: {err}")
             if "429" in err or "quota" in err.lower():
                 print("\033[31mrate limit hit - wait a moment and try again\033[0m")
+                logger.warning("Rate limit hit")
             elif "InterruptedError" not in err and "KeyboardInterrupt" not in err:
                 print(f"\033[31merror: {err[:100]}\033[0m")
 
 if __name__ == "__main__":
-    main()
+    logger.info("CommandPrompt (nlsh) started")
+    try:
+        main()
+    except Exception as e:
+        logger.critical(f"Critical error: {str(e)}", exc_info=True)
+        print(f"\033[31mCritical error: {str(e)}\033[0m")
+    finally:
+        logger.info("CommandPrompt (nlsh) closed")
