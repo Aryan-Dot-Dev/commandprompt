@@ -257,14 +257,17 @@ def call_llm(prompt: str) -> str:
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
             "top_p": 0.5,
-            "max_tokens": 50
+            "max_tokens": 50,
+            "chat_template_kwargs": {
+                "enable_thinking": True
+            }
         }
         try:
             response = requests.post(
                 "https://integrate.api.nvidia.com/v1/chat/completions",
                 json=data,
                 headers=headers,
-                timeout=30
+                timeout=120
             )
             if response.status_code == 200:
                 result = response.json()
