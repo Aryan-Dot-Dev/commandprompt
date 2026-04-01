@@ -22,11 +22,11 @@ if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
 if (Test-Path $INSTALL_DIR) {
     Write-Host "Updating existing installation..."
     Push-Location $INSTALL_DIR
-    git pull --quiet
+    git pull --quiet origin dev
     Pop-Location
 } else {
     Write-Host "Downloading nlsh..."
-    git clone --quiet $REPO_URL $INSTALL_DIR
+    git clone --quiet --branch dev "$REPO_URL" "$INSTALL_DIR"
 }
 
 Push-Location $INSTALL_DIR
